@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.bak
+*.pre-*.bak
+.venv/
+.env*
+*.pem
+.DS_Store
