@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
+<rect width="1200" height="470" fill="#050507"/>
+<text x="40" y="44" font-size="22" font-weight="700" fill="#fdfff5">One effect per event, measured</text>
+<text x="40" y="70" font-size="14" fill="#a8a8b0">Each dot is one HTTP request or delivery attempt from the demo run (same scale in every column).</text>
+<text x="40" y="120" font-size="16" font-weight="700" fill="#fdfff5">Sender: 7 requests</text>
+<circle cx="49" cy="150" r="9" fill="#6fd39b"/>
+<circle cx="75" cy="150" r="9" fill="#6fd39b"/>
+<circle cx="101" cy="150" r="9" fill="#6fd39b"/>
+<text x="124" y="155" font-size="13" fill="#a8a8b0">stored (evt_1, evt_2, evt_3)</text>
+<circle cx="49" cy="188" r="9" fill="#8c8cf0"/>
+<text x="72" y="193" font-size="13" fill="#a8a8b0">same id again: 200, not stored</text>
+<circle cx="49" cy="226" r="9" fill="#ff8b80"/>
+<text x="72" y="231" font-size="13" fill="#a8a8b0">same id, other body: 409</text>
+<circle cx="49" cy="264" r="9" fill="#ff8b80"/>
+<circle cx="75" cy="264" r="9" fill="#ff8b80"/>
+<text x="98" y="269" font-size="13" fill="#a8a8b0">forged or 15 min old: 401</text>
+<path d="M272 115 L306 115" stroke="#33333d" stroke-width="2" fill="none"/><path d="M300 109 L308 115 L300 121" stroke="#33333d" stroke-width="2" fill="none"/>
+<text x="330" y="120" font-size="16" font-weight="700" fill="#fdfff5">Inbox: 3 events</text>
+<circle cx="339" cy="150" r="9" fill="#6fd39b"/>
+<circle cx="365" cy="150" r="9" fill="#6fd39b"/>
+<circle cx="391" cy="150" r="9" fill="#6fd39b"/>
+<text x="414" y="155" font-size="13" fill="#a8a8b0">committed, then 2xx</text>
+<path d="M562 115 L596 115" stroke="#33333d" stroke-width="2" fill="none"/><path d="M590 109 L598 115 L590 121" stroke="#33333d" stroke-width="2" fill="none"/>
+<text x="620" y="120" font-size="16" font-weight="700" fill="#fdfff5">Worker: 7 attempts</text>
+<circle cx="629" cy="150" r="9" fill="#f2c46b"/>
+<circle cx="655" cy="150" r="9" fill="#f2c46b"/>
+<text x="678" y="155" font-size="13" fill="#a8a8b0">503 + Retry-After: backoff</text>
+<circle cx="629" cy="188" r="9" fill="#6fd39b"/>
+<text x="652" y="193" font-size="13" fill="#a8a8b0">evt_1 delivered</text>
+<circle cx="629" cy="226" r="9" fill="#f2c46b"/>
+<text x="652" y="231" font-size="13" fill="#a8a8b0">worker killed after send</text>
+<circle cx="629" cy="264" r="9" fill="#6fd39b"/>
+<text x="652" y="269" font-size="13" fill="#a8a8b0">evt_2 again, fenced lease</text>
+<circle cx="629" cy="302" r="9" fill="#ff8b80"/>
+<text x="652" y="307" font-size="13" fill="#a8a8b0">422: dead letter</text>
+<circle cx="629" cy="340" r="9" fill="#6fd39b"/>
+<text x="652" y="345" font-size="13" fill="#a8a8b0">replayed by operator</text>
+<path d="M852 115 L886 115" stroke="#33333d" stroke-width="2" fill="none"/><path d="M880 109 L888 115 L880 121" stroke="#33333d" stroke-width="2" fill="none"/>
+<text x="910" y="120" font-size="16" font-weight="700" fill="#fdfff5">Receiver: 3 effects</text>
+<circle cx="919" cy="150" r="9" fill="#6fd39b"/>
+<circle cx="945" cy="150" r="9" fill="#6fd39b"/>
+<circle cx="971" cy="150" r="9" fill="#6fd39b"/>
+<text x="994" y="155" font-size="13" fill="#a8a8b0">one per event</text>
+<text x="330" y="418" font-size="13" fill="#fdfff5">verify signature, dedupe id,</text>
+<text x="330" y="436" font-size="13" fill="#fdfff5">COMMIT, then answer</text>
+<text x="620" y="418" font-size="13" fill="#fdfff5">lease + fencing token,</text>
+<text x="620" y="436" font-size="13" fill="#fdfff5">backoff with full jitter</text>
+<text x="910" y="418" font-size="13" fill="#fdfff5">Idempotency-Key stored in</text>
+<text x="910" y="436" font-size="13" fill="#fdfff5">the effect&#x27;s transaction</text>
+<circle cx="780" cy="38" r="6" fill="#6fd39b"/><text x="792" y="43" font-size="13" fill="#a8a8b0">success</text>
+<circle cx="880" cy="38" r="6" fill="#f2c46b"/><text x="892" y="43" font-size="13" fill="#a8a8b0">retried</text>
+<circle cx="980" cy="38" r="6" fill="#8c8cf0"/><text x="992" y="43" font-size="13" fill="#a8a8b0">duplicate</text>
+<circle cx="1080" cy="38" r="6" fill="#ff8b80"/><text x="1092" y="43" font-size="13" fill="#a8a8b0">refused</text>
+</svg>

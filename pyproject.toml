@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webhook-reliability-gateway"
+version = "0.1.0"
+description = "Signed webhook ingress with a durable SQLite inbox and fenced at-least-once delivery: a repeated event or a crashed worker never applies an effect twice"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Wiktor Wojtarowicz"}]
+dependencies = []
+
+[project.scripts]
+webhook-gateway = "webhook_gateway.__main__:main"
+
+[tool.setuptools]
+packages = ["webhook_gateway"]
