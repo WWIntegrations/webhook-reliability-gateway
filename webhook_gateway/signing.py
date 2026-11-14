@@ -24,12 +24,14 @@ def decode_secret(secret: str) -> bytes:
     """Accept ``whsec_<base64>`` (the usual format) or any other string as raw bytes."""
     if secret.startswith("whsec_"):
         try:
-            return base64.b64decode(secret[6:], validate=True)
+            key = base64.b64decode(secret[6:], validate=True)
         except ValueError as e:
             raise ValueError("secret after whsec_ is not valid base64") from e
-    if not secret:
+    else:
+        key = secret.encode("utf-8")
+    if not key:      # an empty HMAC key is public: anyone could sign with it
         raise ValueError("empty secret")
-    return secret.encode("utf-8")
+    return key
 
 
 def sign(secret: str, msg_id: str, timestamp: int, body: bytes) -> str:
@@ -49,7 +51,8 @@ def verify(secrets: list, headers, body: bytes, now: float, tolerance: int = TOL
         raise SignatureError("missing webhook-id, webhook-timestamp or webhook-signature")
     if len(msg_id) > MAX_ID or not msg_id.isprintable():
         raise SignatureError("webhook-id is too long or has control characters")
-    if not ts_raw.isdigit() or len(ts_raw) > 12:
+    # isascii(): str.isdigit() also accepts characters such as '\u00b2' that int() rejects
+    if not (ts_raw.isascii() and ts_raw.isdigit()) or len(ts_raw) > 12:
         raise SignatureError("webhook-timestamp is not a number of seconds")
     ts = int(ts_raw)
     if abs(now - ts) > tolerance:

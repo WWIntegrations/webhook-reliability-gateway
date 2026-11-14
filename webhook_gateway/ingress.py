@@ -4,15 +4,20 @@
 
 202 {"event": id, "duplicate": false}   stored and queued (answered after COMMIT)
 200 {"event": id, "duplicate": true}    the same id and body were stored before
-401  signature missing, wrong, or timestamp outside the tolerance window: nothing stored
-404  unknown source       409  same id, different body      413  body too large
-415  not application/json
+400  body is not JSON     401  signature missing, wrong, or timestamp outside the window
+404  unknown source       409  same id, different body      411  no Content-Length
+413  body too large       415  not application/json
+503  the inbox could not commit (Retry-After: 1); nothing was acknowledged
+
+Nothing is stored for any 4xx or 5xx answer. A connection that sends nothing for
+``read_timeout`` seconds is closed, so idle clients cannot hold server threads.
 
 Binds to loopback by default; put a TLS-terminating proxy in front for real traffic.
 """
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
@@ -22,6 +27,7 @@ from .signing import TOLERANCE, SignatureError, verify
 from .store import Conflict, Store
 
 MAX_BODY = 256 * 1024
+READ_TIMEOUT = 10.0
 
 
 @dataclass(frozen=True)
@@ -33,12 +39,13 @@ class Source:
 
 class Ingress:
     def __init__(self, store: Store, sources: dict, host: str = "127.0.0.1", port: int = 0,
-                 clock=time.time, tolerance: int = TOLERANCE):
+                 clock=time.time, tolerance: int = TOLERANCE, read_timeout: float = READ_TIMEOUT):
         self.store, self.sources, self.clock, self.tolerance = store, sources, clock, tolerance
         gw = self
 
         class Handler(_Handler):
             ctx = gw
+            timeout = read_timeout      # socket timeout per read; http.server closes on expiry
 
         self.httpd = ThreadingHTTPServer((host, port), Handler)
         self.httpd.daemon_threads = True
@@ -61,9 +68,11 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def _json(self, code: int, obj: dict):
+    def _json(self, code: int, obj: dict, extra: dict | None = None):
         data = json.dumps(obj).encode()
         self.send_response(code)
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -91,10 +100,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(401, {"error": str(e)})
         try:
             json.loads(body)
-        except ValueError:
+        except (ValueError, RecursionError):      # RecursionError: nesting deeper than the stack
             return self._json(400, {"error": "body is not valid JSON"})
         try:
             acc = self.ctx.store.accept(source.name, msg_id, body, source.target, self.ctx.clock())
         except Conflict as e:
             return self._json(409, {"error": str(e)})
+        except sqlite3.Error:
+            # not committed, so not acknowledged: the sender keeps the event and retries
+            return self._json(503, {"error": "inbox unavailable, retry"}, {"Retry-After": "1"})
         return self._json(200 if acc.duplicate else 202, {"event": acc.event_id, "duplicate": acc.duplicate})

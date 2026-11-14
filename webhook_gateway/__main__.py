@@ -69,6 +69,7 @@ def main(argv=None) -> int:
     store = Store(a.db)
     if a.cmd == "serve":
         from .ingress import Ingress, Source
+        from .signing import decode_secret
         sources = {}
         for spec in a.source:
             name, _, target = spec.partition("=")
@@ -76,6 +77,12 @@ def main(argv=None) -> int:
             if not name or not target.startswith(("http://", "https://")) or not secrets:
                 print(f"--source {safe(spec)}: need NAME=http(s)://target and WEBHOOK_SECRET_{safe(name.upper())}",
                       file=sys.stderr)
+                return 2
+            try:
+                for secret in secrets:
+                    decode_secret(secret)
+            except ValueError as e:
+                print(f"WEBHOOK_SECRET_{safe(name.upper())}: {e}", file=sys.stderr)
                 return 2
             sources[name] = Source(name, tuple(secrets), target)
         gw = Ingress(store, sources, a.host, a.port)
