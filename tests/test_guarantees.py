@@ -4,6 +4,7 @@ import gc
 import hashlib
 import hmac
 import http.client
+import importlib.util
 import os
 import random
 import socket
@@ -17,7 +18,7 @@ from unittest import mock
 
 from webhook_gateway.__main__ import main
 from webhook_gateway.delivery import Policy, Worker, parse_retry_after, post
-from webhook_gateway.demo import SECRET, send
+from webhook_gateway.demo import SECRET, run
 from webhook_gateway.ingress import Ingress, Source
 from webhook_gateway.receiver import Receiver
 from webhook_gateway.signing import SignatureError, decode_secret, sign, verify
@@ -191,6 +192,39 @@ class ConnectionHygieneTests(unittest.TestCase):
                 self.assertEqual(post(claim, 5)[0], want)
             gc.collect()
         self.assertEqual([str(w.message) for w in seen if issubclass(w.category, ResourceWarning)], [])
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class DocumentedClaimsTests(unittest.TestCase):
+    """The README numbers and the committed diagram come from one demo run, not from prose."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = run()
+        spec = importlib.util.spec_from_file_location("build_diagram", ROOT / "tools" / "build_diagram.py")
+        cls.diagram = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.diagram)
+
+    def test_readme_numbers(self):
+        s = self.result["summary"]
+        self.assertTrue(self.result["pass"])
+        self.assertEqual((s["http_requests_sent"], s["events_stored"], s["delivery_attempts"],
+                          s["receiver_effects"], s["effects_per_event"]), (7, 3, 7, 3, 1))
+        self.assertEqual(len(self.result["requests"]), 7)
+        self.assertEqual(len(self.result["attempts"]), 7)
+
+    def test_committed_diagrams_match_a_fresh_run(self):
+        for theme in self.diagram.THEMES:
+            committed = (ROOT / "docs" / f"how-it-works-{theme}.svg").read_text(encoding="utf-8")
+            self.assertEqual(committed, self.diagram.svg(theme, self.result),
+                             f"docs/how-it-works-{theme}.svg is stale: run python3 tools/build_diagram.py")
+
+    def test_diagram_counts_follow_the_record(self):
+        changed = dict(self.result, attempts=self.result["attempts"][:-1])
+        titles = [title for title, _ in self.diagram.groups_from(changed)]
+        self.assertIn("Worker: 6 attempts", titles)
 
 
 if __name__ == "__main__":

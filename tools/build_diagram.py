@@ -21,24 +21,63 @@ W, H, R, GAP = 1200, 470, 9, 26
 COLS = [40, 330, 620, 910]
 
 
+def _runs(items) -> list:
+    """Merge consecutive equal (kind, label) pairs into (kind, count, label) groups."""
+    out = []
+    for kind, label in items:
+        if out and out[-1][0] == kind and out[-1][2] == label:
+            out[-1] = (kind, out[-1][1] + 1, label)
+        else:
+            out.append((kind, 1, label))
+    return out
+
+
+def _attempt_dot(a, previous) -> tuple:
+    """Kind and label of one delivery attempt, from its recorded outcome."""
+    if a["outcome"] is None:
+        return "retry", "worker killed after send"
+    if a["outcome"] == "retry":
+        return "retry", f"{a['status']} + Retry-After: backoff"
+    if a["outcome"] == "dead":
+        return "bad", f"{a['status']}: dead letter"
+    if a["outcome"] == "fenced":
+        return "bad", "stale worker fenced off"
+    if previous is None or previous["outcome"] == "retry":
+        return "ok", f"{a['msg_id']} delivered"
+    if previous["outcome"] is None:
+        return "ok", f"{a['msg_id']} again, new lease"
+    return "ok", "replayed by operator"
+
+
 def groups_from(result) -> list:
-    """Dot groups per column, read from the measured demo steps."""
-    s = {x["step"]: x for x in result["steps"]}
+    """Dot groups per column, counted from the measured demo record (requests, attempts, effects)."""
     assert all(x["pass"] for x in result["steps"]), "demo failed; refusing to draw it"
+    reqs = result["requests"]
+    stored = [r["msg_id"] for r in reqs if r["status"] == 202]
+    sender = [("ok", len(stored), f"stored ({', '.join(stored)})"),
+              ("dup", sum(r["status"] == 200 and r["duplicate"] for r in reqs), "same id again: 200, not stored"),
+              ("bad", sum(r["status"] == 409 for r in reqs), "same id, other body: 409"),
+              ("bad", sum(r["status"] == 401 for r in reqs), "forged or 15 min old: 401")]
+    assert sum(n for _, n, _ in sender) == len(reqs), "a request status the diagram does not draw"
+    dots, last = [], {}
+    for a in result["attempts"]:
+        dots.append(_attempt_dot(a, last.get(a["event_id"])))
+        last[a["event_id"]] = a
+    worker = _runs(dots)
+    effects = result["effects"]
+    per_event = "one per event" if len(set(effects)) == len(effects) else "DUPLICATE EFFECTS"
     return [
-        ("Sender: 7 requests", [("ok", 3, "stored (evt_1, evt_2, evt_3)"), ("dup", 1, "same id again: 200, not stored"),
-                                ("bad", 1, "same id, other body: 409"), ("bad", 2, "forged or 15 min old: 401")]),
-        ("Inbox: 3 events", [("ok", 3, "committed, then 2xx")]),
-        ("Worker: 7 attempts", [("retry", 2, "503 + Retry-After: backoff"), ("ok", 1, "evt_1 delivered"),
-                                ("retry", 1, "worker killed after send"), ("ok", 1, "evt_2 again, fenced lease"),
-                                ("bad", 1, "422: dead letter"), ("ok", 1, "replayed by operator")]),
-        ("Receiver: 3 effects", [("ok", 3, "one per event")]),
-    ], s
+        (f"Sender: {len(reqs)} requests", [g for g in sender if g[1]]),
+        (f"Inbox: {result['summary']['events_stored']} events", [("ok", result["summary"]["events_stored"],
+                                                                 "committed, then 2xx")]),
+        (f"Worker: {len(result['attempts'])} attempts", worker),
+        (f"Receiver: {len(effects)} effects", [("ok", len(effects), per_event)]),
+    ]
 
 
 def svg(theme: str, result) -> str:
     t = THEMES[theme]
-    cols, _ = groups_from(result)
+    cols = groups_from(result)
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">',
            f'<rect width="{W}" height="{H}" fill="{t["bg"]}"/>',
            f'<text x="40" y="44" font-size="22" font-weight="700" fill="{t["ink"]}">One effect per event, measured</text>',

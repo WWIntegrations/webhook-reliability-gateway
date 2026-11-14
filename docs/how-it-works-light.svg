@@ -30,7 +30,7 @@
 <circle cx="629" cy="226" r="9" fill="#a86b00"/>
 <text x="652" y="231" font-size="13" fill="#55555a">worker killed after send</text>
 <circle cx="629" cy="264" r="9" fill="#1b6e3c"/>
-<text x="652" y="269" font-size="13" fill="#55555a">evt_2 again, fenced lease</text>
+<text x="652" y="269" font-size="13" fill="#55555a">evt_2 again, new lease</text>
 <circle cx="629" cy="302" r="9" fill="#a3261d"/>
 <text x="652" y="307" font-size="13" fill="#55555a">422: dead letter</text>
 <circle cx="629" cy="340" r="9" fill="#1b6e3c"/>

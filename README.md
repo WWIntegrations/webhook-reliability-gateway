@@ -14,23 +14,33 @@ python3 -m webhook_gateway demo
 python3 -m unittest discover -s tests -v
 ```
 
-The demo starts a real sender, the gateway and a receiver on 127.0.0.1, kills a worker process mid-delivery, and prints 10 measured steps:
+The demo starts a real sender, the gateway and a receiver on 127.0.0.1, kills a worker process mid-delivery, and prints 10 measured steps, each with what it observed (exit code 1 if any fails):
 
 ```text
 1. PASS  event accepted and committed before the answer
+   HTTP 202, duplicate=False, committed rows 1
 2. PASS  sender retries the same event after a timeout
+   HTTP 200, duplicate=True
 3. PASS  same id with a different body is refused
+   HTTP 409
 4. PASS  forged signature and 15-minute-old replay are refused
+   HTTP 401 and HTTP 401
 5. PASS  receiver down twice (503, Retry-After: 1): retried, then delivered
+   attempts [503, 503, 200], waited 2.2 s
 6. PASS  worker process dies after the receiver applied the event, before saving
+   exit code 73, delivery state leased, receiver effects for evt_2: 1
 7. PASS  lease expires, a new worker delivers again, receiver applies nothing twice
+   attempts by ['crash-worker', 'worker-b'], effects for evt_2: 1
 8. PASS  receiver rejects an event for good (422): dead-lettered after 1 attempt
+   dead letters ['evt_3'], attempts [1]
 9. PASS  operator fixes the receiver and replays the dead letter
+   replayed=True, state delivered
 10. PASS  each stored event changed the receiver exactly once
    3 events, 7 attempts, 3 effects
+PASS
 ```
 
-`demo --json` prints the full record. The diagram above is built from that record by `tools/build_diagram.py`. No network access beyond 127.0.0.1 is used.
+`demo --json` prints the full record: every request with its status, every delivery attempt with its worker and outcome, and the receiver's effects. The diagram above is counted from that record by `tools/build_diagram.py`, and a test fails when the committed SVGs no longer match a fresh run. No network access beyond 127.0.0.1 is used.
 
 ## Running it
 

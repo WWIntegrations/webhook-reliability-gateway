@@ -41,7 +41,7 @@ def send(url: str, msg_id: str, payload: dict | bytes, *, secret: str = SECRET, 
 def run(workdir: str | None = None) -> dict:
     tmp = tempfile.TemporaryDirectory() if workdir is None else None
     root = Path(workdir or tmp.name)
-    steps, checks = [], []
+    steps, checks, requests = [], [], []
 
     def step(name, observed, ok):
         steps.append({"step": len(steps) + 1, "name": name, "observed": observed, "pass": bool(ok)})
@@ -51,18 +51,25 @@ def run(workdir: str | None = None) -> dict:
     receiver = Receiver(root / "receiver.db").start()
     ingress = Ingress(store, {"shop": Source("shop", (SECRET,), receiver.url)}).start()
     hook = ingress.url + "/hooks/shop"
+
+    def provider_send(msg_id, payload, **kw):
+        code, body = send(hook, msg_id, payload, **kw)
+        requests.append({"msg_id": msg_id, "status": code, "duplicate": body.get("duplicate")})
+        return code, body
     order = {"type": "order.paid", "order_id": "order-17", "amount_cents": 4250, "currency": "EUR"}
     try:
-        code, body = send(hook, "evt_1", order)
-        step("event accepted and committed before the answer", f"HTTP {code}, duplicate={body.get('duplicate')}",
-             code == 202 and body["duplicate"] is False)
-        code, body = send(hook, "evt_1", order)
+        code, body = provider_send("evt_1", order)
+        stored = Store(store.path).counts()["events"]          # a new connection sees only committed rows
+        step("event accepted and committed before the answer",
+             f"HTTP {code}, duplicate={body.get('duplicate')}, committed rows {stored}",
+             code == 202 and body["duplicate"] is False and stored == 1)
+        code, body = provider_send("evt_1", order)
         step("sender retries the same event after a timeout", f"HTTP {code}, duplicate={body.get('duplicate')}",
              code == 200 and body["duplicate"] is True)
-        code, body = send(hook, "evt_1", dict(order, amount_cents=1))
+        code, body = provider_send("evt_1", dict(order, amount_cents=1))
         step("same id with a different body is refused", f"HTTP {code}", code == 409)
-        code, _ = send(hook, "evt_forged", order, secret="whsec_" + "d3Jvbmc=")
-        code2, _ = send(hook, "evt_old", order, ts=int(time.time()) - 900)
+        code, _ = provider_send("evt_forged", order, secret="whsec_" + "d3Jvbmc=")
+        code2, _ = provider_send("evt_old", order, ts=int(time.time()) - 900)
         step("forged signature and 15-minute-old replay are refused", f"HTTP {code} and HTTP {code2}",
              code == 401 and code2 == 401)
 
@@ -74,7 +81,7 @@ def run(workdir: str | None = None) -> dict:
         step("receiver down twice (503, Retry-After: 1): retried, then delivered",
              f"attempts {tries}, waited {waited:.1f} s", tries == [503, 503, 200] and waited >= 2.0)
 
-        code, _ = send(hook, "evt_2", dict(order, order_id="order-18", amount_cents=990))
+        code, _ = provider_send("evt_2", dict(order, order_id="order-18", amount_cents=990))
         crash = subprocess.run([sys.executable, "-m", "webhook_gateway", "_crash-once", "--db",
                                 str(store.path), "--lease", str(POLICY.lease_secs)],
                                capture_output=True, text=True, timeout=30)
@@ -91,7 +98,7 @@ def run(workdir: str | None = None) -> dict:
              [a["worker"] for a in a2] == ["crash-worker", "worker-b"] and receiver.effects().count("shop:evt_2") == 1)
 
         receiver.refuse.add("shop:evt_3")
-        send(hook, "evt_3", dict(order, order_id="order-404"))
+        provider_send("evt_3", dict(order, order_id="order-404"))
         Worker(store, POLICY, name="worker-b").run_until_idle(time.time() + 30)
         dead = store.deliveries("dead")
         step("receiver rejects an event for good (422): dead-lettered after 1 attempt",
@@ -106,7 +113,9 @@ def run(workdir: str | None = None) -> dict:
 
         effects = receiver.effects()
         counts = store.counts()
-        summary = {"http_requests_sent": 7, "events_stored": counts["events"], "delivered": counts.get("delivered", 0),
+        ids = {d["event_id"]: d["msg_id"] for d in store.deliveries()}
+        attempts = [dict(a, msg_id=ids[a["event_id"]]) for a in store.attempts()]
+        summary = {"http_requests_sent": len(requests), "events_stored": counts["events"], "delivered": counts.get("delivered", 0),
                    "delivery_attempts": counts["attempts"], "receiver_requests": receiver.requests,
                    "receiver_effects": len(effects), "effects_per_event": max(effects.count(k) for k in set(effects))}
         step("each stored event changed the receiver exactly once",
@@ -118,7 +127,8 @@ def run(workdir: str | None = None) -> dict:
         receiver.shutdown()
         if tmp:
             tmp.cleanup()
-    return {"pass": all(checks), "steps": steps, "summary": summary}
+    return {"pass": all(checks), "steps": steps, "summary": summary, "requests": requests,
+            "attempts": attempts, "effects": effects}
 
 
 def crash_once(db: str, lease: float) -> None:
