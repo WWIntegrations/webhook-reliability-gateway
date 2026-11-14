@@ -5,6 +5,8 @@ import hmac
 import http.client
 import os
 import random
+import socket
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -29,15 +31,16 @@ class FakeClock:
         return self.t
 
 
-def post_raw(url: str, path: str, body: bytes, headers: dict, timeout: float = 5) -> int:
-    """POST with http.client so that header values are sent exactly as given (latin-1)."""
+def post_raw(url: str, path: str, body: bytes, headers: dict, timeout: float = 5):
+    """POST with http.client so that header values are sent exactly as given (latin-1).
+    Returns (status, response headers)."""
     host, port = url.removeprefix("http://").split(":")
     conn = http.client.HTTPConnection(host, int(port), timeout=timeout)
     try:
         conn.request("POST", path, body=body, headers=headers)
         resp = conn.getresponse()
         resp.read()
-        return resp.status
+        return resp.status, resp.headers
     finally:
         conn.close()
 
@@ -71,7 +74,7 @@ class NonAsciiDigitTests(unittest.TestCase):
         store = Store(Path(tmp.name) / "gw.db")
         gw = Ingress(store, {"shop": Source("shop", (SECRET,), "http://t")}).start()
         self.addCleanup(gw.shutdown)
-        code = post_raw(gw.url, "/hooks/shop", b"{}", {
+        code, _ = post_raw(gw.url, "/hooks/shop", b"{}", {
             "Content-Type": "application/json", "webhook-id": "evt_1", "webhook-timestamp": "\u00b2",
             "webhook-signature": "v1,AAAA"})
         self.assertEqual(code, 401)
@@ -99,6 +102,55 @@ class SecretTests(unittest.TestCase):
                     mock.patch.dict(os.environ, {"WEBHOOK_SECRET_SHOP": value}), \
                     mock.patch("webhook_gateway.ingress.Ingress", side_effect=AssertionError("started")):
                 self.assertEqual(main(["serve", "--db", str(Path(d) / "g.db"), "--source", "shop=http://t"]), 2)
+
+
+def signed_headers(msg_id: str, body: bytes, ts: int | None = None) -> dict:
+    ts = int(time.time()) if ts is None else ts
+    return {"Content-Type": "application/json", "webhook-id": msg_id, "webhook-timestamp": str(ts),
+            "webhook-signature": sign(SECRET, msg_id, ts, body)}
+
+
+class IngressRobustnessTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.store = Store(self.root / "gw.db")
+
+    def start(self, store=None, **kw):
+        gw = Ingress(store or self.store, {"shop": Source("shop", (SECRET,), "http://t")}, **kw).start()
+        self.addCleanup(gw.shutdown)
+        return gw
+
+    def test_a_client_that_stops_sending_is_disconnected(self):
+        """Without a socket timeout one idle connection held a server thread forever (slowloris)."""
+        gw = self.start(read_timeout=0.5)
+        host, port = gw.url.removeprefix("http://").split(":")
+        for partial in (b"POST /hooks/shop HTTP/1.1\r\n",
+                        b"POST /hooks/shop HTTP/1.1\r\nContent-Type: application/json\r\n"
+                        b"Content-Length: 100\r\n\r\n{"):
+            with socket.create_connection((host, int(port)), timeout=5) as s:
+                s.sendall(partial)
+                t0 = time.monotonic()
+                self.assertEqual(s.recv(1024), b"", "server should close the idle connection")
+                self.assertLess(time.monotonic() - t0, 3)
+
+    def test_a_storage_failure_answers_503_and_never_2xx(self):
+        class Locked(Store):
+            def accept(self, *a, **kw):
+                raise sqlite3.OperationalError("database is locked")
+
+        gw = self.start(store=Locked(self.root / "locked.db"))
+        code, headers = post_raw(gw.url, "/hooks/shop", b"{}", signed_headers("evt_1", b"{}"))
+        self.assertEqual(code, 503)
+        self.assertEqual(headers.get("Retry-After"), "1")
+
+    def test_deeply_nested_json_is_refused_with_400(self):
+        body = b"[" * 260_000
+        gw = self.start()
+        code, _ = post_raw(gw.url, "/hooks/shop", body, signed_headers("evt_deep", body))
+        self.assertEqual(code, 400)
+        self.assertEqual(self.store.counts()["events"], 0)
 
 
 if __name__ == "__main__":
