@@ -49,7 +49,8 @@ def verify(secrets: list, headers, body: bytes, now: float, tolerance: int = TOL
         raise SignatureError("missing webhook-id, webhook-timestamp or webhook-signature")
     if len(msg_id) > MAX_ID or not msg_id.isprintable():
         raise SignatureError("webhook-id is too long or has control characters")
-    if not ts_raw.isdigit() or len(ts_raw) > 12:
+    # isascii(): str.isdigit() also accepts characters such as '\u00b2' that int() rejects
+    if not (ts_raw.isascii() and ts_raw.isdigit()) or len(ts_raw) > 12:
         raise SignatureError("webhook-timestamp is not a number of seconds")
     ts = int(ts_raw)
     if abs(now - ts) > tolerance:

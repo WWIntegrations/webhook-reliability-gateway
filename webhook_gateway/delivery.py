@@ -43,7 +43,7 @@ def parse_retry_after(value: str | None, now: float) -> float | None:
     if not value:
         return None
     value = value.strip()
-    if value.isdigit():
+    if value.isascii() and value.isdigit():   # isdigit() alone accepts '\u00b2', which float() rejects
         return float(value)
     try:
         when = email.utils.parsedate_to_datetime(value)
