@@ -10,16 +10,18 @@ import random
 import socket
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 import warnings
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
 from webhook_gateway.__main__ import main
 from webhook_gateway.delivery import Policy, Worker, parse_retry_after, post
 from webhook_gateway.demo import SECRET, run
-from webhook_gateway.ingress import Ingress, Source
+from webhook_gateway.ingress import MAX_BODY, Ingress, Source
 from webhook_gateway.receiver import Receiver
 from webhook_gateway.signing import SignatureError, decode_secret, sign, verify
 from webhook_gateway.store import Claim, Store
@@ -192,6 +194,78 @@ class ConnectionHygieneTests(unittest.TestCase):
                 self.assertEqual(post(claim, 5)[0], want)
             gc.collect()
         self.assertEqual([str(w.message) for w in seen if issubclass(w.category, ResourceWarning)], [])
+
+
+class DeliveryGuaranteeTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.store = Store(self.root / "gw.db")
+
+    def test_concurrent_workers_claim_each_delivery_once(self):
+        for i in range(20):
+            self.store.accept("shop", f"evt_{i}", b"{}", "http://t", NOW)
+        claims, start = [], threading.Barrier(8)
+
+        def go(n):
+            mine, own = [], Store(self.store.path)     # one connection per worker, as in production
+            start.wait()
+            while (c := own.claim(f"w{n}", NOW, 60)) is not None:
+                mine.append(c.event_id)
+            claims.extend(mine)
+
+        threads = [threading.Thread(target=go, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(claims), list(range(1, 21)))
+
+    def test_every_attempt_carries_the_same_key_and_body(self):
+        rcv = Receiver(self.root / "r.db").start()
+        self.addCleanup(rcv.shutdown)
+        seen = []
+        handle = rcv.handle
+        rcv.handle = lambda key, body: seen.append((key, body)) or handle(key, body)
+        rcv.fail_next, rcv.retry_after = 2, "0"
+        self.store.accept("shop", "evt_1", b'{"n":1}', rcv.url, time.time())
+        outcomes = Worker(self.store, Policy(base_delay=0.01), name="w").run_until_idle(time.time() + 10)
+        self.assertEqual(outcomes, ["retry", "retry", "delivered"])
+        self.assertEqual(seen, [("shop:evt_1", b'{"n":1}')] * 3)
+        self.assertEqual(rcv.effects(), ["shop:evt_1"])
+
+    def test_a_redirect_is_not_followed(self):
+        """Targets are fixed by the operator; a 3xx must not send the event somewhere else."""
+        rcv = Receiver(self.root / "r.db").start()
+        self.addCleanup(rcv.shutdown)
+
+        class Moved(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(307)
+                self.send_header("Location", rcv.url)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Moved)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.store.accept("shop", "evt_1", b"{}", f"http://127.0.0.1:{httpd.server_address[1]}/hook", time.time())
+        self.assertEqual(Worker(self.store, Policy(), name="w").run_once(), "dead")
+        self.assertEqual(self.store.deliveries()[0]["last_status"], 307)
+        self.assertEqual(rcv.requests, 0)
+
+    def test_body_of_exactly_max_body_is_accepted(self):
+        gw = Ingress(self.store, {"shop": Source("shop", (SECRET,), "http://t")}).start()
+        self.addCleanup(gw.shutdown)
+        body = b'"' + b"x" * (MAX_BODY - 2) + b'"'
+        self.assertEqual(post_raw(gw.url, "/hooks/shop", body, signed_headers("evt_big", body))[0], 202)
+        self.assertEqual(self.store.counts()["events"], 1)
 
 
 ROOT = Path(__file__).resolve().parents[1]
