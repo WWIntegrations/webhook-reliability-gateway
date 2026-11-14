@@ -54,7 +54,7 @@ Providers post to `/hooks/<source>` with Standard Webhooks headers (`webhook-id`
 | Inbox | `UNIQUE(source, webhook id)`; same id with another body is 409 | provider retries are stored once; a reused id cannot change history |
 | Worker | lease with a fencing token per attempt | a worker that dies is replaced after the lease; a stalled one cannot overwrite the newer result |
 | Worker | 2xx done; 408, 425, 429, 5xx, network errors retried; other 4xx dead at once | a broken event does not burn the retry budget of a healthy queue |
-| Worker | backoff with full jitter, never sooner than `Retry-After`, capped | a recovering receiver is not hit by a synchronized wave |
+| Worker | backoff with full jitter, capped; a `Retry-After` is a floor and the jitter goes on top of it | a recovering receiver is not hit by a synchronized wave, even when it told every event to wait the same time |
 | Worker | expired leases count as attempts | a crash loop ends in the dead-letter list instead of looping forever |
 | Receiver | stores `Idempotency-Key` in the same transaction as its effect | the at-least-once delivery becomes a once-only effect |
 

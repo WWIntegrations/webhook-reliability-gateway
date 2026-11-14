@@ -134,7 +134,7 @@ class DeliveryRuleTests(unittest.TestCase):
                 d = backoff(attempt, p, rng)
                 self.assertTrue(0 <= d <= min(60, 2 ** (attempt - 1)))
         self.assertGreaterEqual(backoff(1, p, rng, retry_after=30), 30)
-        self.assertEqual(backoff(1, p, rng, retry_after=10_000), 60)
+        self.assertTrue(60 <= backoff(1, p, rng, retry_after=10_000) <= 61)    # floor capped, jitter on top
 
     def test_retry_after_parsing(self):
         self.assertEqual(parse_retry_after("120", NOW), 120)

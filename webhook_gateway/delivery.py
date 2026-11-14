@@ -7,8 +7,9 @@ stores that key in the same transaction as its effect applies each event exactly
 
 Retry rules:
 - 2xx: delivered.
-- 408, 425, 429, 5xx and network errors: retried with exponential backoff and full jitter,
-  never sooner than the receiver's ``Retry-After`` (capped at ``max_delay``).
+- 408, 425, 429, 5xx and network errors: retried with exponential backoff and full jitter.
+  A ``Retry-After`` from the receiver (capped at ``max_delay``) is a floor, and the jitter
+  is added on top of it, so events told to wait the same time do not return together.
 - any other 4xx: the receiver refused this event for good; it goes to the dead-letter list
   at once instead of using up the retry budget. An operator can replay it later.
 - after ``max_attempts`` the event goes to the dead-letter list as well.
@@ -55,12 +56,14 @@ def parse_retry_after(value: str | None, now: float) -> float | None:
 
 
 def backoff(attempt: int, policy: Policy, rng: random.Random, retry_after: float | None = None) -> float:
-    """Full jitter: uniform(0, min(max_delay, base * 2**(attempt-1))), raised to Retry-After."""
+    """Full jitter: uniform(0, min(max_delay, base * 2**(attempt-1))).
+
+    With Retry-After the jitter goes on top of min(Retry-After, max_delay): never sooner than
+    the receiver asked, and not all at the same instant either.
+    """
     ceiling = min(policy.max_delay, policy.base_delay * (2 ** max(0, attempt - 1)))
-    delay = rng.uniform(0, ceiling)
-    if retry_after is not None:
-        delay = max(delay, min(retry_after, policy.max_delay))
-    return delay
+    floor = 0.0 if retry_after is None else min(retry_after, policy.max_delay)
+    return floor + rng.uniform(0, ceiling)
 
 
 def classify(status: int | None) -> str:

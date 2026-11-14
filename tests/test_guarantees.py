@@ -153,5 +153,23 @@ class IngressRobustnessTests(unittest.TestCase):
         self.assertEqual(self.store.counts()["events"], 0)
 
 
+class RetryStormTests(unittest.TestCase):
+    def test_events_told_to_wait_the_same_time_do_not_come_back_together(self):
+        """With Retry-After above the jitter ceiling every event got exactly now + Retry-After,
+        so a receiver that asked for 30 s got the whole queue back in the same instant."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = Store(Path(tmp.name) / "gw.db")
+        for i in range(50):
+            store.accept("shop", f"evt_{i}", b"{}", "http://t", NOW)
+        w = Worker(store, Policy(base_delay=1, max_delay=300), name="w", rng=random.Random(3), clock=FakeClock(),
+                   sender=lambda claim, timeout: (429, "30", "HTTP 429"))
+        self.assertEqual([w.run_once() for _ in range(50)], ["retry"] * 50)
+        due = [d["next_at"] for d in store.deliveries()]
+        self.assertGreaterEqual(min(due), NOW + 30)           # never sooner than Retry-After
+        self.assertEqual(len(set(due)), 50)
+        self.assertGreater(max(due) - min(due), 0.5)          # spread over the first jitter window
+
+
 if __name__ == "__main__":
     unittest.main()
