@@ -217,7 +217,8 @@ class HttpTests(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status
         except urllib.error.HTTPError as e:
-            return e.code
+            with e:
+                return e.code
 
     def test_refusals_store_nothing(self):
         self.assertEqual(send(self.hook, "e1", {"a": 1}, secret="whsec_eA==")[0], 401)

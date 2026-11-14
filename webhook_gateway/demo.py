@@ -34,7 +34,8 @@ def send(url: str, msg_id: str, payload: dict | bytes, *, secret: str = SECRET, 
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        with e:
+            return e.code, json.loads(e.read() or b"{}")
 
 
 def run(workdir: str | None = None) -> dict:

@@ -13,5 +13,10 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python }}
-      - run: python -W error::ResourceWarning -m unittest discover -s tests -v
+      # a ResourceWarning raised while an object is collected cannot fail the test run by itself;
+      # it is printed as "Exception ignored", so the log is checked for it as well
+      - run: |
+          python -W error::ResourceWarning -m unittest discover -s tests -v 2> unittest.log || { cat unittest.log; exit 1; }
+          cat unittest.log
+          ! grep -n "Exception ignored" unittest.log
       - run: python -m webhook_gateway demo

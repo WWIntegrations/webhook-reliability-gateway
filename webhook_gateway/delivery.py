@@ -96,7 +96,8 @@ def post(claim: Claim, timeout: float) -> tuple[int | None, str | None, str | No
         with _OPENER.open(req, timeout=timeout) as resp:
             return resp.status, resp.headers.get("Retry-After"), None
     except urllib.error.HTTPError as e:
-        return e.code, e.headers.get("Retry-After") if e.headers else None, f"HTTP {e.code}"
+        with e:                             # an HTTPError is also the open response: close it
+            return e.code, e.headers.get("Retry-After") if e.headers else None, f"HTTP {e.code}"
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         return None, None, f"{type(e).__name__}: {getattr(e, 'reason', e)}"[:MAX_ERROR]
 

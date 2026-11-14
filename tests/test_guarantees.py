@@ -1,5 +1,6 @@
 """Regression tests for defects found in review, and tests for the guarantees the README lists."""
 import base64
+import gc
 import hashlib
 import hmac
 import http.client
@@ -10,15 +11,17 @@ import sqlite3
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
 from webhook_gateway.__main__ import main
-from webhook_gateway.delivery import Policy, Worker, parse_retry_after
+from webhook_gateway.delivery import Policy, Worker, parse_retry_after, post
 from webhook_gateway.demo import SECRET, send
 from webhook_gateway.ingress import Ingress, Source
+from webhook_gateway.receiver import Receiver
 from webhook_gateway.signing import SignatureError, decode_secret, sign, verify
-from webhook_gateway.store import Store
+from webhook_gateway.store import Claim, Store
 
 NOW = 1_800_000_000
 
@@ -169,6 +172,25 @@ class RetryStormTests(unittest.TestCase):
         self.assertGreaterEqual(min(due), NOW + 30)           # never sooner than Retry-After
         self.assertEqual(len(set(due)), 50)
         self.assertGreater(max(due) - min(due), 0.5)          # spread over the first jitter window
+
+
+class ConnectionHygieneTests(unittest.TestCase):
+    def test_error_answers_do_not_leave_the_response_open(self):
+        """post() kept the HTTPError (which holds the socket) open on every 4xx and 5xx;
+        under a long outage each retry left a socket for the garbage collector."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        rcv = Receiver(Path(tmp.name) / "r.db").start()
+        self.addCleanup(rcv.shutdown)
+        rcv.fail_next = 1
+        rcv.refuse.add("shop:evt_2")
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always", ResourceWarning)
+            for msg_id, want in (("evt_1", 503), ("evt_2", 422)):
+                claim = Claim(1, "shop", msg_id, b"{}", rcv.url, 1, "tok", 1)
+                self.assertEqual(post(claim, 5)[0], want)
+            gc.collect()
+        self.assertEqual([str(w.message) for w in seen if issubclass(w.category, ResourceWarning)], [])
 
 
 if __name__ == "__main__":
