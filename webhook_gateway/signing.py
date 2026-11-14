@@ -24,12 +24,14 @@ def decode_secret(secret: str) -> bytes:
     """Accept ``whsec_<base64>`` (the usual format) or any other string as raw bytes."""
     if secret.startswith("whsec_"):
         try:
-            return base64.b64decode(secret[6:], validate=True)
+            key = base64.b64decode(secret[6:], validate=True)
         except ValueError as e:
             raise ValueError("secret after whsec_ is not valid base64") from e
-    if not secret:
+    else:
+        key = secret.encode("utf-8")
+    if not key:      # an empty HMAC key is public: anyone could sign with it
         raise ValueError("empty secret")
-    return secret.encode("utf-8")
+    return key
 
 
 def sign(secret: str, msg_id: str, timestamp: int, body: bytes) -> str:
